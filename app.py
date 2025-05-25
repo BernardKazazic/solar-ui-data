@@ -60,6 +60,15 @@ class ModelResponse(BaseModel):
         return v
 
 
+class ModelUpdateRequest(BaseModel):
+    features: List[str]
+
+
+class UpdateSuccessResponse(BaseModel):
+    message: str
+    model_id: int
+
+
 class ModelsListResponse(BaseModel):
     models: List[ModelResponse]
     total_count: int
@@ -80,7 +89,7 @@ async def list_models(
 ):
     """
     Get a paginated list of all models from the model_metadata table.
-    Results are sorted by plant name, then by model name.
+    Results are sorted by plant name, then by model name, then by version.
     """
     offset = (page - 1) * page_size
 
@@ -104,7 +113,7 @@ async def list_models(
                     pp.name as plant_name
                 FROM model_metadata mm
                 JOIN power_plant_v2 pp ON mm.plant_id = pp.id
-                ORDER BY pp.name, mm.name
+                ORDER BY pp.name, mm.name, mm.version
                 LIMIT $1 OFFSET $2
             """
 
@@ -135,6 +144,56 @@ async def list_models(
         except Exception as e:
             logger.error(f"Database query failed: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to fetch models")
+
+
+@app.put("/models/{model_id}", response_model=UpdateSuccessResponse)
+async def update_model_features(model_id: int, update_data: ModelUpdateRequest):
+    """
+    Update the features of a specific model by ID.
+    Only the features field can be modified.
+    """
+    async with db_pool.acquire() as conn:
+        try:
+            check_query = """
+                SELECT 
+                    mm.id,
+                    mm.name,
+                    mm.type,
+                    mm.version,
+                    mm.features,
+                    pp.name as plant_name
+                FROM model_metadata mm
+                JOIN power_plant_v2 pp ON mm.plant_id = pp.id
+                WHERE mm.id = $1
+            """
+
+            existing_model = await conn.fetchrow(check_query, model_id)
+
+            if not existing_model:
+                raise HTTPException(
+                    status_code=404, detail=f"Model with ID {model_id} not found"
+                )
+
+            update_query = """
+                UPDATE model_metadata 
+                SET features = $1
+                WHERE id = $2
+            """
+
+            await conn.execute(update_query, json.dumps(update_data.features), model_id)
+
+            return UpdateSuccessResponse(
+                message="Model features updated successfully",
+                model_id=model_id,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Database update failed: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail="Failed to update model features"
+            )
 
 
 if __name__ == "__main__":
