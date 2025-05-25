@@ -146,6 +146,49 @@ async def list_models(
             raise HTTPException(status_code=500, detail="Failed to fetch models")
 
 
+@app.get("/models/{model_id}", response_model=ModelResponse)
+async def get_model(model_id: int):
+    """
+    Get a single model by ID from the model_metadata table.
+    """
+    async with db_pool.acquire() as conn:
+        try:
+            query = """
+                SELECT 
+                    mm.id,
+                    mm.name,
+                    mm.type,
+                    mm.version,
+                    mm.features,
+                    pp.name as plant_name
+                FROM model_metadata mm
+                JOIN power_plant_v2 pp ON mm.plant_id = pp.id
+                WHERE mm.id = $1
+            """
+
+            row = await conn.fetchrow(query, model_id)
+
+            if not row:
+                raise HTTPException(
+                    status_code=404, detail=f"Model with ID {model_id} not found"
+                )
+
+            return ModelResponse(
+                id=row["id"],
+                name=row["name"],
+                type=row["type"],
+                version=row["version"],
+                features=row["features"],
+                plant_name=row["plant_name"],
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Database query failed: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to fetch model")
+
+
 @app.put("/models/{model_id}", response_model=UpdateSuccessResponse)
 async def update_model_features(model_id: int, update_data: ModelUpdateRequest):
     """
